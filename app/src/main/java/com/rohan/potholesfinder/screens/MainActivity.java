@@ -1,14 +1,20 @@
 package com.rohan.potholesfinder.screens;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationRequest;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.auth.FirebaseAuth;
 import com.rohan.potholesfinder.R;
@@ -36,9 +42,22 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener,
+        LocationListener {
 
 
+    public static final int LOCATION_INTERVAL = 10000;
+    public static final int FASTEST_LOCATION_INTERVAL = 5000;
+    private static final String TAG = "MainActivity";
+
+
+    GoogleApiClient mLocationClient;
+    LocationRequest mLocationRequest = new LocationRequest();
+
+
+    public static final String EXTRA_LATITUDE = "extra_latitude";
+    public static final String EXTRA_LONGITUDE = "extra_longitude";
+    //
     protected Location currentLocation;
     private AddressResultReceiver resultReceiver;
     private FusedLocationProviderClient fusedLocationProviderClient;
@@ -55,9 +74,32 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         textView = findViewById(R.id.text);
+
+
         if (!hasPermissions()) {
             requestPermissions();
         }
+        //---------------------------
+        mLocationClient = new GoogleApiClient.Builder(this)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .addApi(LocationServices.API)
+                .build();
+
+        mLocationRequest.setInterval(LOCATION_INTERVAL);
+        mLocationRequest.setFastestInterval(FASTEST_LOCATION_INTERVAL);
+
+
+        int priority = LocationRequest.PRIORITY_HIGH_ACCURACY; //by default
+        //PRIORITY_BALANCED_POWER_ACCURACY, PRIORITY_LOW_POWER, PRIORITY_NO_POWER are the other priority modes
+
+
+        mLocationRequest.setPriority(priority);
+        mLocationClient.connect();
+
+        //-----------------------------
+
+
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
 
         resultReceiver = new AddressResultReceiver(new Handler());
@@ -69,6 +111,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 startActivity(new Intent(MainActivity.this, CameraXactivity.class));
+            }
+        });
+
+
+        textView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                fetchAddress();
             }
         });
 
@@ -84,28 +134,37 @@ public class MainActivity extends AppCompatActivity {
         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, FINE_LOCATION_PERMISSION_REQUEST_CODE);
     }
 
-    public void fetchAddress(View view) {
-        fusedLocationProviderClient.getLastLocation()
-                .addOnSuccessListener(this, new OnSuccessListener<Location>() {
-                    @Override
-                    public void onSuccess(Location location) {
+    public void fetchAddress() {
 
-                        currentLocation = location;
+        if(currentLocation!=null){
+            startIntentService();
 
-                        if (!Geocoder.isPresent()) {
-                            Toast.makeText(MainActivity.this, "No GeoCoder Available", Toast.LENGTH_SHORT).show();
-                            return;
-                        }
-                        startIntentService();
+        }
 
-                    }
-                })
-                .addOnFailureListener(this, new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        textView.setText(e.toString());
-                    }
-                });
+
+
+//        fusedLocationProviderClient.getLastLocation()
+//                .addOnSuccessListener(this, new OnSuccessListener<Location>() {
+//                    @Override
+//                    public void onSuccess(Location location) {
+//
+//                        currentLocation = location;
+//
+//                        if (!Geocoder.isPresent()) {
+//                            Toast.makeText(MainActivity.this, "No GeoCoder Available", Toast.LENGTH_SHORT).show();
+//                            return;
+//                        }
+//                        startIntentService();
+//
+//                    }
+//                })
+//                .addOnFailureListener(this, new OnFailureListener() {
+//                    @Override
+//                    public void onFailure(@NonNull Exception e) {
+//                        textView.setText(e.toString());
+//                    }
+//                });
+
     }
 
     protected void startIntentService() {
@@ -117,6 +176,34 @@ public class MainActivity extends AppCompatActivity {
 
     private void setAddress(String address) {
         textView.setText(address);
+    }
+
+
+    //-----GoogleMapsApi Methods-----//
+    @Override
+    public void onConnected(@Nullable Bundle bundle) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.d(TAG, "== Error On onConnected() Permission not granted");
+            return;
+        }
+        LocationServices.FusedLocationApi.requestLocationUpdates(mLocationClient, mLocationRequest, this);
+
+        Log.d(TAG, "Connected to Google API");
+    }
+
+    @Override
+    public void onConnectionSuspended(int i) {
+        Log.d(TAG, "Connection suspended");
+    }
+
+    @Override
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+        Log.d(TAG, "Failed to connect to Google API");
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+        currentLocation = location;
     }
 
 

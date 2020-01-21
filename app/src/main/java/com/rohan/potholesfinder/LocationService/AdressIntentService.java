@@ -45,8 +45,8 @@ public class AdressIntentService  extends IntentService {
         String errorMessage = "";
         try {
             addresses = geocoder.getFromLocation(
-                    location.getLatitude(),
-                    location.getLongitude(),
+                    location != null ? location.getLatitude() : 0,
+                    location != null ? location.getLongitude() : 0,
                     1);
         } catch (IOException ioException) {
             errorMessage = "Service not available";
@@ -54,7 +54,7 @@ public class AdressIntentService  extends IntentService {
         } catch (IllegalArgumentException illegalArgumentException) {
             errorMessage = "invalid longitude latitude used";
             Log.d(TAG, "onHandleIntent: latitude = "
-                    + location.getLatitude() + " ,Longitude = " +
+                    + (location != null ? location.getLatitude() : 0) + " ,Longitude = " +
                     location.getLongitude() + "\n"
                     + illegalArgumentException.toString());
         }
