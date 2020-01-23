@@ -5,7 +5,10 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -17,6 +20,10 @@ import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.ml.vision.FirebaseVision;
+import com.google.firebase.ml.vision.common.FirebaseVisionImage;
+import com.google.firebase.ml.vision.label.FirebaseVisionImageLabel;
+import com.google.firebase.ml.vision.label.FirebaseVisionImageLabeler;
 import com.rohan.potholesfinder.R;
 
 import androidx.annotation.NonNull;
@@ -42,12 +49,18 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
 public class MainActivity extends AppCompatActivity implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener,
         LocationListener {
 
 
     public static final int LOCATION_INTERVAL = 10000;
     public static final int FASTEST_LOCATION_INTERVAL = 5000;
+    public static final int IMAGE_CAPTURE_CODE = 2;
+    private static final int FILE_SELECT_CODE = 0;
     private static final String TAG = "MainActivity";
 
 
@@ -110,7 +123,31 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startActivity(new Intent(MainActivity.this, CameraXactivity.class));
+
+                Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                if(intent.resolveActivity(getPackageManager()) != null)
+                    startActivityForResult(intent,IMAGE_CAPTURE_CODE);
+            }
+        });
+        fab.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/*");
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+
+                try {
+                    startActivityForResult(
+                            Intent.createChooser(intent, "Select an Image to racognize"),
+                            FILE_SELECT_CODE);
+                } catch (android.content.ActivityNotFoundException ex) {
+                    // Potentially direct the user to the Market with a Dialog
+                    Toast.makeText(MainActivity.this, "Please install a File Manager.",
+                            Toast.LENGTH_SHORT).show();
+                }
+
+                return true;
             }
         });
 
@@ -207,6 +244,145 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
     }
 
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode,resultCode,data);
+        if (resultCode == RESULT_OK) {
+
+            switch (requestCode) {
+                case IMAGE_CAPTURE_CODE:
+
+                    Bundle bundle = data.getExtras();
+                    if (bundle != null) {
+                        Bitmap bitmap = (Bitmap) bundle.get("data");
+
+                        processLabel(bitmap);
+                    } else {
+                        Toast.makeText(this, "null bundle", Toast.LENGTH_SHORT).show();
+                    }
+                    break;
+                case FILE_SELECT_CODE:
+                    Uri uri = data.getData();
+                    if (uri == null) {
+                        Toast.makeText(this, "null uri", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    processLabel(uri);
+                    break;
+            }
+        }
+    }
+
+    private void processLabel(final Bitmap bitmap){
+
+        FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(bitmap);
+        FirebaseVisionImageLabeler labeler = FirebaseVision.getInstance()
+                .getOnDeviceImageLabeler();
+        labeler.processImage(image)
+                .addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
+                    @Override
+                    public void onSuccess(List<FirebaseVisionImageLabel> labels) {
+                        // Task completed successfully
+
+                        if (imageLabelsVerified(labels)){
+                            uploadImage(bitmap);
+                        } else {
+                            Toast.makeText(MainActivity.this, "The pic doesn't seems to be of a pothole", Toast.LENGTH_SHORT).show();
+                        }
+//
+//                        StringBuilder sb = new StringBuilder();
+//                        for (FirebaseVisionImageLabel label : labels) {
+//                            String text = label.getText();
+//                            String entityId = label.getEntityId();
+//                            float confidence = label.getConfidence();
+//                            sb.append("Text :").append(text).append("\n")
+//                                    .append("confidence :").append(confidence).append("\n\n");
+//                        }
+//                        Toast.makeText(MainActivity.this, sb.toString(), Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .addOnFailureListener(new OnFailureListener() {
+                    @Override
+                    public void onFailure(@NonNull Exception e) {
+                        // Task failed with an exception
+                        Toast.makeText(MainActivity.this, e.toString(), Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+    private void processLabel(final Uri uri){
+
+        FirebaseVisionImage image = null;
+        try {
+            image = FirebaseVisionImage.fromFilePath(this,uri);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return;
+        }
+        FirebaseVisionImageLabeler labeler = FirebaseVision.getInstance()
+                .getOnDeviceImageLabeler();
+        labeler.processImage(image)
+                .addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
+                    @Override
+                    public void onSuccess(List<FirebaseVisionImageLabel> labels) {
+                        // Task completed successfully
+
+                        if (imageLabelsVerified(labels)){
+                            Toast.makeText(MainActivity.this, "Verified ok", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(MainActivity.this, "The pic doesn't seems to be of a pothole", Toast.LENGTH_SHORT).show();
+                        }
+//
+//                        StringBuilder sb = new StringBuilder();
+//                        for (FirebaseVisionImageLabel label : labels) {
+//                            String text = label.getText();
+//                            String entityId = label.getEntityId();
+//                            float confidence = label.getConfidence();
+//                            sb.append("Text :").append(text).append("\n")
+//                                    .append("confidence :").append(confidence).append("\n\n");
+//                        }
+//                        Toast.makeText(MainActivity.this, sb.toString(), Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .addOnFailureListener(new OnFailureListener() {
+                    @Override
+                    public void onFailure(@NonNull Exception e) {
+                        // Task failed with an exception
+                        Toast.makeText(MainActivity.this, e.toString(), Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private boolean imageLabelsVerified(List<FirebaseVisionImageLabel> labels){
+
+        //this is a temporary solution to verify our pothole image
+        //we will update the logic if we found a better one
+
+        ArrayList<String> requiredLabels = new ArrayList<>();
+        //these keywords are found by testing image of a road
+        //in different scenarios
+
+        requiredLabels.add("soil");
+        requiredLabels.add("asphalt");
+        requiredLabels.add("road");
+        requiredLabels.add("rock");
+        requiredLabels.add("stone");
+        requiredLabels.add("concrete");
+        requiredLabels.add("sand");
+        //can add more related fields
+
+        for (FirebaseVisionImageLabel label : labels){
+            if (requiredLabels.contains(label.getText().toLowerCase())){
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void uploadImage(Bitmap bitmap){
+
+    }
+
     class AddressResultReceiver extends ResultReceiver {
 
         public AddressResultReceiver(Handler handler) {
@@ -221,6 +397,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
                 setAddress("result data is null");
                 return;
             }
+
             String address = resultData.getString("data_key");
             if (address == null) {
                 address = "null";
