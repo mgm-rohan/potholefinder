@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
@@ -18,28 +19,28 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.tasks.Task;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.ml.vision.FirebaseVision;
 import com.google.firebase.ml.vision.common.FirebaseVisionImage;
 import com.google.firebase.ml.vision.label.FirebaseVisionImageLabel;
 import com.google.firebase.ml.vision.label.FirebaseVisionImageLabeler;
+import com.google.firebase.ml.vision.label.FirebaseVisionOnDeviceImageLabelerOptions;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 import com.rohan.potholesfinder.R;
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
-import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.location.Geocoder;
 import android.location.Location;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.ResultReceiver;
-import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -49,8 +50,10 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener,
@@ -78,7 +81,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
     public static final int FINE_LOCATION_PERMISSION_REQUEST_CODE = 1;
 
     private TextView textView;
-
+    FirebaseFirestore mFirestore;
     FirebaseAuth mAuth;
     FloatingActionButton fab;
 
@@ -118,6 +121,8 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
         resultReceiver = new AddressResultReceiver(new Handler());
 
         mAuth = FirebaseAuth.getInstance();
+        mFirestore = FirebaseFirestore.getInstance();
+
         fab = findViewById(R.id.fab);
 
         fab.setOnClickListener(new View.OnClickListener() {
@@ -125,8 +130,8 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
             public void onClick(View view) {
 
                 Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                if(intent.resolveActivity(getPackageManager()) != null)
-                    startActivityForResult(intent,IMAGE_CAPTURE_CODE);
+                if (intent.resolveActivity(getPackageManager()) != null)
+                    startActivityForResult(intent, IMAGE_CAPTURE_CODE);
             }
         });
         fab.setOnLongClickListener(new View.OnLongClickListener() {
@@ -164,43 +169,21 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     private boolean hasPermissions() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 == PackageManager.PERMISSION_GRANTED;
     }
 
     private void requestPermissions() {
-        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, FINE_LOCATION_PERMISSION_REQUEST_CODE);
+        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.WRITE_EXTERNAL_STORAGE}, FINE_LOCATION_PERMISSION_REQUEST_CODE);
     }
 
     public void fetchAddress() {
 
-        if(currentLocation!=null){
+        if (currentLocation != null) {
             startIntentService();
 
         }
 
-
-
-//        fusedLocationProviderClient.getLastLocation()
-//                .addOnSuccessListener(this, new OnSuccessListener<Location>() {
-//                    @Override
-//                    public void onSuccess(Location location) {
-//
-//                        currentLocation = location;
-//
-//                        if (!Geocoder.isPresent()) {
-//                            Toast.makeText(MainActivity.this, "No GeoCoder Available", Toast.LENGTH_SHORT).show();
-//                            return;
-//                        }
-//                        startIntentService();
-//
-//                    }
-//                })
-//                .addOnFailureListener(this, new OnFailureListener() {
-//                    @Override
-//                    public void onFailure(@NonNull Exception e) {
-//                        textView.setText(e.toString());
-//                    }
-//                });
 
     }
 
@@ -246,7 +229,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode,resultCode,data);
+        super.onActivityResult(requestCode, resultCode, data);
         if (resultCode == RESULT_OK) {
 
             switch (requestCode) {
@@ -256,7 +239,12 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
                     if (bundle != null) {
                         Bitmap bitmap = (Bitmap) bundle.get("data");
 
-                        processLabel(bitmap);
+                        try {
+                            //Convert Bitmap to Uri => Process => Verify Label => Upload
+                            processImgUri(getImageUri(bitmap));
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
                     } else {
                         Toast.makeText(this, "null bundle", Toast.LENGTH_SHORT).show();
                     }
@@ -267,95 +255,26 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
                         Toast.makeText(this, "null uri", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    processLabel(uri);
+
+                    try {
+                        //Process => Verify Label => Upload
+                        processImgUri(uri);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                     break;
             }
         }
     }
 
-    private void processLabel(final Bitmap bitmap){
 
-        FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(bitmap);
-        FirebaseVisionImageLabeler labeler = FirebaseVision.getInstance()
-                .getOnDeviceImageLabeler();
-        labeler.processImage(image)
-                .addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
-                    @Override
-                    public void onSuccess(List<FirebaseVisionImageLabel> labels) {
-                        // Task completed successfully
 
-                        if (imageLabelsVerified(labels)){
-                            uploadImage(bitmap);
-                        } else {
-                            Toast.makeText(MainActivity.this, "The pic doesn't seems to be of a pothole", Toast.LENGTH_SHORT).show();
-                        }
-//
-//                        StringBuilder sb = new StringBuilder();
-//                        for (FirebaseVisionImageLabel label : labels) {
-//                            String text = label.getText();
-//                            String entityId = label.getEntityId();
-//                            float confidence = label.getConfidence();
-//                            sb.append("Text :").append(text).append("\n")
-//                                    .append("confidence :").append(confidence).append("\n\n");
-//                        }
-//                        Toast.makeText(MainActivity.this, sb.toString(), Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        // Task failed with an exception
-                        Toast.makeText(MainActivity.this, e.toString(), Toast.LENGTH_SHORT).show();
-                    }
-                });
-    }
-    private void processLabel(final Uri uri){
 
-        FirebaseVisionImage image = null;
-        try {
-            image = FirebaseVisionImage.fromFilePath(this,uri);
-        } catch (IOException e) {
-            e.printStackTrace();
-            return;
-        }
-        FirebaseVisionImageLabeler labeler = FirebaseVision.getInstance()
-                .getOnDeviceImageLabeler();
-        labeler.processImage(image)
-                .addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
-                    @Override
-                    public void onSuccess(List<FirebaseVisionImageLabel> labels) {
-                        // Task completed successfully
-
-                        if (imageLabelsVerified(labels)){
-                            Toast.makeText(MainActivity.this, "Verified ok", Toast.LENGTH_SHORT).show();
-                        } else {
-                            Toast.makeText(MainActivity.this, "The pic doesn't seems to be of a pothole", Toast.LENGTH_SHORT).show();
-                        }
-//
-//                        StringBuilder sb = new StringBuilder();
-//                        for (FirebaseVisionImageLabel label : labels) {
-//                            String text = label.getText();
-//                            String entityId = label.getEntityId();
-//                            float confidence = label.getConfidence();
-//                            sb.append("Text :").append(text).append("\n")
-//                                    .append("confidence :").append(confidence).append("\n\n");
-//                        }
-//                        Toast.makeText(MainActivity.this, sb.toString(), Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .addOnFailureListener(new OnFailureListener() {
-                    @Override
-                    public void onFailure(@NonNull Exception e) {
-                        // Task failed with an exception
-                        Toast.makeText(MainActivity.this, e.toString(), Toast.LENGTH_SHORT).show();
-                    }
-                });
-    }
-
-    private boolean imageLabelsVerified(List<FirebaseVisionImageLabel> labels){
+    private boolean imageLabelsVerified(List<FirebaseVisionImageLabel> labels) {
 
         //this is a temporary solution to verify our pothole image
         //we will update the logic if we found a better one
+
 
         ArrayList<String> requiredLabels = new ArrayList<>();
         //these keywords are found by testing image of a road
@@ -370,8 +289,9 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
         requiredLabels.add("sand");
         //can add more related fields
 
-        for (FirebaseVisionImageLabel label : labels){
-            if (requiredLabels.contains(label.getText().toLowerCase())){
+        for (FirebaseVisionImageLabel label : labels) {
+
+            if (requiredLabels.contains(label.getText().toLowerCase())) {
                 return true;
             }
         }
@@ -379,8 +299,84 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
         return false;
     }
 
-    private void uploadImage(Bitmap bitmap){
 
+    private void processImgUri(final Uri uri) throws IOException {
+        FirebaseVisionImage image = FirebaseVisionImage.fromFilePath(this, uri);
+
+        FirebaseVisionOnDeviceImageLabelerOptions options = new FirebaseVisionOnDeviceImageLabelerOptions.Builder()
+                .setConfidenceThreshold(0.8f)
+                .build();
+
+        FirebaseVisionImageLabeler detector = FirebaseVision.getInstance().getOnDeviceImageLabeler(options);
+
+
+        detector.processImage(image).addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
+            @Override
+            public void onSuccess(List<FirebaseVisionImageLabel> firebaseVisionImageLabels) {
+
+                if (imageLabelsVerified(firebaseVisionImageLabels)) {
+                    Toast.makeText(MainActivity.this, "Verified ok", Toast.LENGTH_SHORT).show();
+                    //Ready To Upload
+                    uploadImageUri(uri);
+
+
+                } else {
+                    Toast.makeText(MainActivity.this, "The pic doesn't seems to be of a pothole", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }).addOnFailureListener(new OnFailureListener() {
+            @Override
+            public void onFailure(@NonNull Exception e) {
+                Log.d("rohan :", "--------FAILED--------------------");
+            }
+        });
+
+    }
+
+    private void uploadImageUri(final Uri uri) {
+
+        final String currUid = mAuth.getCurrentUser().getUid().toString();
+        StorageReference storageRef =
+                FirebaseStorage.getInstance().getReference().child("UserReportedPotholes").child(mAuth.getCurrentUser().getEmail() + "_" + System.currentTimeMillis());
+        storageRef.putFile(uri).addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
+            @Override
+            public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
+
+
+                Task<Uri> result = taskSnapshot.getMetadata().getReference().getDownloadUrl();
+                result.addOnSuccessListener(new OnSuccessListener<Uri>() {
+                    @Override
+                    public void onSuccess(Uri uri) {
+                        String photoStringLink = uri.toString();
+                        String email = mAuth.getCurrentUser().getEmail();
+
+                        HashMap<String, String> map
+                                = new HashMap<>();
+                        map.put("emai", email);
+                        map.put("uid", currUid);
+                        map.put("image", photoStringLink);
+                        mFirestore.collection("potholeImages").document().set(map);
+                        Toast.makeText(MainActivity.this, "Uploaded", Toast.LENGTH_SHORT).show();
+                    }
+                });
+
+            }
+        }).addOnFailureListener(new OnFailureListener() {
+            @Override
+            public void onFailure(@NonNull Exception e) {
+                Toast.makeText(MainActivity.this, "Failed To Upload", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+
+    }
+
+
+    public Uri getImageUri(Bitmap inImage) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        inImage.compress(Bitmap.CompressFormat.JPEG, 100, bytes);
+        String path = MediaStore.Images.Media.insertImage(this.getContentResolver(), inImage, "Title", null);
+        return Uri.parse(path);
     }
 
     class AddressResultReceiver extends ResultReceiver {
@@ -430,6 +426,49 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
     private void userSignOut() {
         mAuth.signOut();
         startActivity(new Intent(MainActivity.this, LoginActivity.class));
-
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+//    private void processImgBitmap(final Bitmap bitmap) {
+//
+//        FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(bitmap);
+//        Log.d("rohan :", "--------Line266--------------------");
+//        FirebaseVisionOnDeviceImageLabelerOptions options = new FirebaseVisionOnDeviceImageLabelerOptions.Builder()
+//                .setConfidenceThreshold(0.8f)
+//                .build();
+//        Log.d("rohan :", "--------Line270--------------------");
+//
+//        FirebaseVisionImageLabeler detector = FirebaseVision.getInstance().getOnDeviceImageLabeler(options);
+//        detector.processImage(image).addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
+//            @Override
+//            public void onSuccess(List<FirebaseVisionImageLabel> firebaseVisionImageLabels) {
+//                Log.d("rohan :", "--------onSuccess--------------------");
+//                if (imageLabelsVerified(firebaseVisionImageLabels)) {
+//                    Toast.makeText(MainActivity.this, "Verified ok", Toast.LENGTH_SHORT).show();
+//                    // UPLOAD BITMAP HERE
+////                    Uri bitmapUri = getImageUri(MainActivity.this, bitmap);
+////                    uploadImageUri(bitmapUri);
+//                } else {
+//                    Toast.makeText(MainActivity.this, "The pic doesn't seems to be of a pothole", Toast.LENGTH_SHORT).show();
+//                }
+//
+//            }
+//        }).addOnFailureListener(new OnFailureListener() {
+//            @Override
+//            public void onFailure(@NonNull Exception e) {
+//                Log.d("rohan :", "--------FAILED--------------------");
+//            }
+//        });
+//    }
