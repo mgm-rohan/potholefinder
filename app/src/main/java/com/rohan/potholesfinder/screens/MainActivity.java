@@ -73,7 +73,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     public static final String EXTRA_LATITUDE = "extra_latitude";
     public static final String EXTRA_LONGITUDE = "extra_longitude";
-    //
+    
     protected Location currentLocation;
     private AddressResultReceiver resultReceiver;
     private FusedLocationProviderClient fusedLocationProviderClient;
@@ -444,11 +444,9 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 //    private void processImgBitmap(final Bitmap bitmap) {
 //
 //        FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(bitmap);
-//        Log.d("rohan :", "--------Line266--------------------");
 //        FirebaseVisionOnDeviceImageLabelerOptions options = new FirebaseVisionOnDeviceImageLabelerOptions.Builder()
 //                .setConfidenceThreshold(0.8f)
 //                .build();
-//        Log.d("rohan :", "--------Line270--------------------");
 //
 //        FirebaseVisionImageLabeler detector = FirebaseVision.getInstance().getOnDeviceImageLabeler(options);
 //        detector.processImage(image).addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
